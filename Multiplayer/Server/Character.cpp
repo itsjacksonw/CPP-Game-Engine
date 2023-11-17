@@ -1,6 +1,8 @@
 #include "Character.h"
 
-float pixelLeniency = 4; // the amount of pixels a player can miss a jump and still make it
+
+
+using namespace std;
 
 Character::Character(float width, float height, float x, float y, float speed)
 : GameObject(width, height, x, y) {
@@ -23,20 +25,41 @@ void Character::jump() {
     }
 }
 
-void Character::processFrame(GameObject platforms[], int numPlatforms, float deltaTime) {
+void Character::processFrame(GameObject* platforms[], int numPlatforms,
+    SpawnPoint* spawns[], int numSpawns, DeathZone* deaths[], int numDeaths,
+    SideBoundary* scrolls[], int numScrolls, float deltaTime) {
     if (!Character::checkCollisions(platforms, numPlatforms)) { // check collisions, if not on ground, run y velocity
         Character::moveY(deltaTime);
         Character::gravity(deltaTime);
+    }
+    //check for new spawnpoint
+    checkSpawns(spawns, numSpawns);
+    //check for deathzone
+    checkDeaths(deaths, numDeaths);
+    //check for screen boundaries
+    SideBoundary boundary = checkScrolls(scrolls, numScrolls);
+    if (boundary.getId() != -1) {
+        
+        boundary.moveScreen(platforms, numPlatforms);
+        boundary.moveScreen((GameObject**)spawns, numSpawns);
+        boundary.moveScreen((GameObject**)deaths, numDeaths);
+        boundary.moveScreen((GameObject**)scrolls, numScrolls);
+
+        move(sf::Vector2f(boundary.direction, 0) * boundary.distance);
+        spawn += sf::Vector2f(boundary.direction, 0) * boundary.distance;
+
     }
     
 }
 
 // private functions
 
-bool Character::checkCollisions(GameObject platforms[], int numPlatforms) {
+bool Character::checkCollisions(GameObject* platforms[], int numPlatforms) {
+
     for (int i = 0; i < numPlatforms; i++) {
+
         sf::FloatRect bounds = getGlobalBounds();
-        sf::FloatRect platformBounds = platforms[i].getGlobalBounds();
+        sf::FloatRect platformBounds = (*platforms[i]).getGlobalBounds();
          
         if (bounds.intersects(platformBounds)) { // collision
 
@@ -84,6 +107,58 @@ bool Character::checkCollisions(GameObject platforms[], int numPlatforms) {
     isGrounded = false;
     return false;
     update();
+}
+
+void Character::checkSpawns(SpawnPoint* spawns[], int numSpawns) {
+    for (int i = 0; i < numSpawns; i++) {
+        sf::FloatRect bounds = getGlobalBounds();
+        sf::FloatRect spawnBounds = (*spawns[i]).getGlobalBounds();
+
+        if (bounds.intersects(spawnBounds)) { // collision
+            this->spawn = (*spawns[i]).getSpawn();
+            return;
+        }
+    }
+}
+
+void Character::checkDeaths(DeathZone* deaths[], int numDeaths) {
+    for (int i = 0; i < numDeaths; i++) {
+        sf::FloatRect bounds = getGlobalBounds();
+        sf::FloatRect deathBounds = (*deaths[i]).getGlobalBounds();
+
+        if (bounds.intersects(deathBounds)) { // collision
+            setPosition(this->spawn);
+            this->yVelocity = 0;
+            //eventManager->RecieveEvent(0); // raise spawn event
+            return;
+        }
+    }
+}
+
+SideBoundary Character::checkScrolls(SideBoundary* scrolls[], int numScrolls) {
+    for (int i = 0; i < numScrolls; i++) {
+        sf::FloatRect bounds = getGlobalBounds();
+        sf::FloatRect scrollBounds = (*scrolls[i]).getGlobalBounds();
+
+        if (bounds.intersects(scrollBounds)) { // collision
+            
+            if (lastScroll != (*scrolls[i]).getId()) {
+                lastScroll = (*scrolls[i]).getId();
+                return (*scrolls[i]);
+            }
+        }
+    }
+    return SideBoundary(0, 0, 0, 0, 0, 0, -1);
+}
+
+void Character::setVelocity(sf::Vector2f velocity)
+{
+    yVelocity = velocity.y;
+}
+
+sf::Vector2f Character::getSpawn()
+{
+    return spawn;
 }
 
 void Character::gravity(float deltaTime) {

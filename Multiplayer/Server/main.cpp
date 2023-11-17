@@ -8,53 +8,175 @@
 #include "MovingPlatform.h"
 #include "Character.h"
 #include "Timeline.h"
+#include "SpawnPoint.h"
+#include "DeathZone.h"
+#include "EventManager.h"
 #include <zmq.hpp>
 
 using namespace std;
 
-class InputThread {
+class ClientCommunication {
 
-    bool busy; // a member variable used to indicate thread "status"
     int i; // an identifier
-    //ThreadExample *other; // a reference to the "other" thread in this example
-    std::mutex* _mutex; // the object for mutual exclusion of execution
-    Character* _player;
-    float _deltaTime;
+    std::mutex* mutex; // the object for mutual exclusion of execution
+    Character** players;
+    bool** connectedPlayers;
+    sf::Clock** playerTimer;
+    zmq::socket_t* socket;
+    MovingPlatform* movingPlatform;
+    MovingPlatform* movingPlatform2;
+    EventManager* eventManager;
 
 public:
-    InputThread(int i, std::mutex* _mutex, Character* _player, long _deltaTime) {
-        this->busy = false;
+    ClientCommunication(int i, std::mutex* mutex, zmq::socket_t* socket, Character* players[4],
+        bool* connectedPlayers[4], sf::Clock* playerTimer[4], MovingPlatform* movingPlatform, MovingPlatform* movingPlatform2, EventManager* eventManager) {
         this->i = i;
-        if (i == 0) { this->busy = true; }
-        this->_mutex = _mutex;
-        this->_player = _player;
-        this->_deltaTime = _deltaTime;
-    }
+        this->mutex = mutex;
+        this->socket = socket;
+        this->players = players;
+        this->connectedPlayers = connectedPlayers;
+        this->playerTimer = playerTimer;
+        this->movingPlatform = movingPlatform;
+        this->movingPlatform2 = movingPlatform2;
+        this->eventManager = eventManager;
 
-    bool isBusy()
-    {
-        //std::lock_guard<std::mutex> lock(*_mutex);  // this locks the mutuex until the variable goes out of scope (i.e., when the function returns in this case)
-        return busy;
+        
     }
 
     void run() {
-        // player inputs
+        // actual thread code
         try {
-            //std::unique_lock<std::mutex> cv_lock(*this->_mutex);
+            while (true) {
+                int rec = 0;
+                while (rec != -1) {
+                    char message[1024] = "\0";
+                    mutex->lock();
+                    rec = zmq_recv(*socket, message, 1024, ZMQ_DONTWAIT);
+                    mutex->unlock();
+                    if (rec != -1) {
+                        if (strcmp(message, "Join") == 0) {
+                            zmq::message_t reply(2);
+                            string sid;
+                            
+                            for (int i = 0; i < 4; i++) { // check which player slot is open
+                                if (*connectedPlayers[i] == false) {
+                                    *connectedPlayers[i] = true;
+                                    playerTimer[i]->restart();
+                                    *players[i] = Character(25, 50, 50, 300, 6);
+                                    sid = to_string(i);
+                                    break;
+                                }
+                            }
 
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) {
-                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-                _player->walk(sf::Vector2f(1, 0), _deltaTime);
+                            const char* id = sid.c_str();
+                            memcpy(reply.data(), id, 2);
+                            cout << "Client connected with id: " << (char*)reply.data() << endl;
+                            mutex->lock();
+                            socket->send(reply, zmq::send_flags::none);
+                            mutex->unlock();
+                        }
+
+                        else if (message[0] == 'E') { // event
+                            
+                            zmq::message_t reply(2);
+                            memcpy(reply.data(), "s", 2);
+
+                            int clientId = message[1] - 48;
+                            
+                            mutex->lock();
+                            eventManager->ReceiveEvent(eventManager->EVENT_TYPE_DEATH, clientId);
+                            mutex->unlock();
+
+                            mutex->lock();
+                            socket->send(reply, zmq::send_flags::none);
+                            mutex->unlock();
+                        }
+
+                        else {
+                            int mx = round(movingPlatform->getPosition().x);
+                            int my = round(movingPlatform->getPosition().y);
+                            int mx2 = round(movingPlatform2->getPosition().x);
+                            int my2 = round(movingPlatform2->getPosition().y);
+                            string sreport = to_string(mx) + "." + to_string(my) + "-" + to_string(mx2) + "," + to_string(my2) + "/";
+
+                            if (message[0] == '0') { // otherPlayer #0
+                                playerTimer[0]->restart();
+
+                                string mes = message;
+                                string x = mes.substr(2, mes.find(".") - 2);
+                                string y = mes.substr(mes.find(".") + 1, mes.length());
+                                players[0]->setPosition(sf::Vector2f(stoi(x), stoi(y)));
+
+                                for (int i = 0; i < 4; i++) { // check which players are connected
+                                    if (i != 0 && *connectedPlayers[i]) { // if this player is connected
+                                        int x = round(players[i]->getPosition().x);
+                                        int y = round(players[i]->getPosition().y);
+                                        sreport += to_string(i) + ":" + to_string(x) + "," + to_string(y) + "/";
+                                    }
+                                }
+
+                            }
+                            if (message[0] == '1') { // otherPlayer #0
+                                playerTimer[1]->restart();
+
+                                string mes = message;
+                                string x = mes.substr(2, mes.find(".") - 2);
+                                string y = mes.substr(mes.find(".") + 1, mes.length());
+                                players[1]->setPosition(sf::Vector2f(stoi(x), stoi(y)));
+
+                                for (int i = 0; i < 4; i++) { // check which players are connected
+                                    if (i != 1 && *connectedPlayers[i]) { // if this player is connected
+                                        int x = round(players[i]->getPosition().x);
+                                        int y = round(players[i]->getPosition().y);
+                                        sreport += to_string(i) + ":" + to_string(x) + "," + to_string(y) + "/";
+                                    }
+                                }
+                            }
+                            if (message[0] == '2') { // otherPlayer #0
+                                playerTimer[2]->restart();
+
+                                string mes = message;
+                                string x = mes.substr(2, mes.find(".") - 2);
+                                string y = mes.substr(mes.find(".") + 1, mes.length());
+                                players[2]->setPosition(sf::Vector2f(stoi(x), stoi(y)));
+
+                                for (int i = 0; i < 4; i++) { // check which players are connected
+                                    if (i != 2 && *connectedPlayers[i]) { // if this player is connected
+                                        int x = round(players[i]->getPosition().x);
+                                        int y = round(players[i]->getPosition().y);
+                                        sreport += to_string(i) + ":" + to_string(x) + "," + to_string(y) + "/";
+                                    }
+                                }
+                            }
+                            if (message[0] == '3') { // otherPlayer #0
+                                playerTimer[3]->restart();
+
+                                string mes = message;
+                                string x = mes.substr(2, mes.find(".") - 2);
+                                string y = mes.substr(mes.find(".") + 1, mes.length());
+                                players[3]->setPosition(sf::Vector2f(stoi(x), stoi(y)));
+
+                                for (int i = 0; i < 4; i++) { // check which players are connected
+                                    if (i != 3 && *connectedPlayers[i]) { // if this player is connected
+                                        int x = round(players[i]->getPosition().x);
+                                        int y = round(players[i]->getPosition().y);
+                                        sreport += to_string(i) + ":" + to_string(x) + "," + to_string(y) + "/";
+                                    }
+                                }
+                            }
+
+                            const char* report = sreport.c_str();
+                            zmq::message_t reply(1024);
+                            memcpy(reply.data(), report, 1024);
+                            mutex->lock();
+                            socket->send(reply, zmq::send_flags::none);
+                            mutex->unlock();
+
+                        }
+                    }
+                }
             }
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) {
-                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-                _player->walk(sf::Vector2f(-1, 0), _deltaTime);
-            }
-            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) {
-                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-                _player->jump();
-            }
-            
+
         }
         catch (...) {
             std::cerr << "Thread " << i << " caught exception." << std::endl;
@@ -63,61 +185,9 @@ public:
 
 };
 
-class CollisionThread {
-
-    bool busy; // a member variable used to indicate thread "status"
-    int i; // an identifier
-    //ThreadExample *other; // a reference to the "other" thread in this example
-    std::mutex* _mutex; // the object for mutual exclusion of execution
-    Character* _player;
-    GameObject* _platforms;
-    int _numPlatforms;
-    float _deltaTime;
-
-public:
-    CollisionThread(int i, std::mutex* _mutex, Character* _player, GameObject _platforms[], int _numPlatforms, long _deltaTime) {
-        this->busy = false;
-        this->i = i;
-        if (i == 0) { this->busy = true; }
-        this->_mutex = _mutex;
-        this->_player = _player;
-        this->_platforms = _platforms;
-        this->_numPlatforms = _numPlatforms;
-        this->_deltaTime = _deltaTime;
-    }
-
-    bool isBusy()
-    {
-        //std::lock_guard<std::mutex> lock(*_mutex);  // this locks the mutuex until the variable goes out of scope (i.e., when the function returns in this case)
-        return busy;
-    }
-
-    void run() {
-        // player inputs
-        try {
-            std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-            _player->processFrame(_platforms, _numPlatforms, _deltaTime);
-
-            
-        }
-        catch (...) {
-            std::cerr << "Thread " << i << " caught exception." << std::endl;
-        }
-    }
-
-};
-
-/**
- * Wrapper function because threads can't take pointers to member functions.
- */
-void run_input(InputThread* th)
+void run_thread(ClientCommunication* c)
 {
-    th->run();
-}
-
-void run_collision(CollisionThread* th)
-{
-    th->run();
+    c->run();
 }
 
 
@@ -127,7 +197,6 @@ int main() {
     zmq::context_t context(2);
     zmq::socket_t socket(context, zmq::socket_type::rep);
     socket.bind("tcp://*:5555");
-
 
     // creates a window 800x600 pixels
     sf::RenderWindow window;
@@ -139,29 +208,62 @@ int main() {
     sf::Clock clock = sf::Clock();
     long previousTime = 0;
 
-    float halfSpeed = 50.0f;
-    float normalSpeed = 25.0f;
-    float doubleSpeed = 12.5f;
+    float halfSpeed = 40.0f;
+    float normalSpeed = 20.0f;
+    float doubleSpeed = 10.0f;
 
-    float tic = 25.0f;
+    float tic = 20.0f;
     Timeline timeline = Timeline(&clock, tic);
 
+    EventManager eventManager = EventManager(&timeline);
+
     // create objects
-    Platform platform = Platform(800, 100, 0, 500);
-    Platform wall = Platform(25, 600, 0, 0);
-    Platform wall2 = Platform(25, 600, 775, 0);
+    Platform platform1 = Platform(350, 100, 0, 500, sf::Color::Magenta);
+    Platform platform2 = Platform(725, 100, 450, 500, sf::Color::Cyan);
+    Platform platform3 = Platform(350, 100, 1275, 500, sf::Color::Green);
+    Platform wall = Platform(25, 600, -25, 0);
+    Platform wall2 = Platform(25, 600, 775 + 800, 0);
     Platform ceiling = Platform(800, 50, 0, 0);
-    MovingPlatform movingPlatform = MovingPlatform(200, 25, 450, 450, sf::Vector2f(0, 1), 1, 200, 400);
-    movingPlatform.setFillColor(sf::Color(sf::Color::Green));
+    MovingPlatform movingPlatform = MovingPlatform(200, 25, 450, 450, sf::Vector2f(0, 1), 1, 200, 400, sf::Color::Green);
+    MovingPlatform movingPlatform2 = MovingPlatform(200, 25, 100, 250, sf::Vector2f(1, 0), 1, 225, 100, sf::Color::Yellow);
 
-    // create the player 
-    Character player = Character(25, 50, 100, 300, 6);
+    
+    //Create four generic players
+    Character p1 = Character(25, 50, 50, 300, 6);
+    Character p2 = Character(25, 50, 50, 300, 6);
+    Character p3 = Character(25, 50, 50, 300, 6);
+    Character p4 = Character(25, 50, 50, 300, 6);
+    Character* players[4] = { &p1, &p2, &p3, &p4 };
+    bool cp1 = false;
+    bool cp2 = false;
+    bool cp3 = false;
+    bool cp4 = false;
+    bool* connectedPlayers[4] = { &cp1, &cp2, &cp3, &cp4 };
+    sf::Clock tp1 = sf::Clock();
+    sf::Clock tp2 = sf::Clock();
+    sf::Clock tp3 = sf::Clock();
+    sf::Clock tp4 = sf::Clock();
+    sf::Clock* playerTimer[4] = { &tp1, &tp2, &tp3, &tp4 };
+    float disconnectTime = 2.0f;
 
-    // create the client's plays
-    Character otherPlayers[3] = { Character(25, 50, 100, 300, 6), 
-        Character(25, 50, 100, 300, 6), Character(25, 50, 100, 300, 6) };
+    std::mutex mutex;
 
-    int connections = 0; // the amount of clients connected to server
+    // register events
+    eventManager.RegisterDeathEvent(0, 5, players[0]);
+    eventManager.RegisterDeathEvent(1, 5, players[1]);
+    eventManager.RegisterDeathEvent(2, 5, players[2]);
+    eventManager.RegisterDeathEvent(3, 5, players[3]);
+
+    ClientCommunication clientCommunication(0, &mutex, &socket, players, connectedPlayers, playerTimer, &movingPlatform, &movingPlatform2, &eventManager);
+    std::thread thread0 = std::thread(run_thread, &clientCommunication);
+    ClientCommunication clientCommunication2(1, &mutex, &socket, players, connectedPlayers, playerTimer, &movingPlatform, &movingPlatform2, &eventManager);
+    std::thread thread1 = std::thread(run_thread, &clientCommunication2);
+    ClientCommunication clientCommunication3(2, &mutex, &socket, players, connectedPlayers, playerTimer, &movingPlatform, &movingPlatform2, &eventManager);
+    std::thread thread2 = std::thread(run_thread, &clientCommunication3);
+    ClientCommunication clientCommunication4(3, &mutex, &socket, players, connectedPlayers, playerTimer, &movingPlatform, &movingPlatform2, &eventManager);
+    std::thread thread3 = std::thread(run_thread, &clientCommunication4);
+
+    //register events
 
     // run the program as long as the window is open
     while (window.isOpen())
@@ -173,25 +275,6 @@ int main() {
             // "close requested" event: we close the window
             if (event.type == sf::Event::Closed)
                 window.close();
-
-            if (event.type == sf::Event::KeyPressed) {
-                if (event.key.scancode == sf::Keyboard::Scan::P) {
-                    timeline.togglePause();
-                }
-
-                if (event.key.scancode == sf::Keyboard::Scan::Comma) {
-                    timeline.changeTic(halfSpeed);
-                    previousTime = 0;
-                }
-                if (event.key.scancode == sf::Keyboard::Scan::Slash) {
-                    timeline.changeTic(doubleSpeed);
-                    previousTime = 0;
-                }
-                if (event.key.scancode == sf::Keyboard::Scan::Period) {
-                    timeline.changeTic(normalSpeed);
-                    previousTime = 0;
-                }
-            }
         }
 
         // clear the window with black color
@@ -201,163 +284,42 @@ int main() {
         long deltaTime = timeline.getTime() - previousTime;
         previousTime = timeline.getTime();
 
-        // player input
-        std::mutex mutex;
-        std::condition_variable cv;
+        movingPlatform.frameMove(deltaTime);
+        movingPlatform2.frameMove(deltaTime);
 
-        bool ranInput = false;
-        std::thread thread0;
-        if (window.hasFocus()) {
-            InputThread inputThread(0, &mutex, &player, deltaTime);
-            thread0 = std::thread(run_input, &inputThread);
-            ranInput = true;
-        }
-        
+        //mutex.lock();
+        eventManager.DispatchEvents(deltaTime);
+        //mutex.unlock();
 
-        // collision
-        //player.processFrame(platforms, numPlatforms, deltaTime);
-        int numPlatforms = 5;
-        GameObject platforms[5] = { platform, movingPlatform, wall, wall2, ceiling }; // list of platforms to collide with
-
-        CollisionThread collisionThread(0, &mutex, &player, platforms, numPlatforms, deltaTime);
-        std::thread thread1(run_collision, &collisionThread);
-
-        if (player.getPosition().y > 900) { // respawn if fall off screen
-            player.setPosition(sf::Vector2f(100, 300));
-        }
-
-        // join the threads
-        if (ranInput) {
-            thread0.join();
-        }
-        thread1.join();
-
-
-        // contact the clients
-        int rec = 0;
-        while (rec != -1) {
-            char message[1024] = "\0";
-            rec = zmq_recv(socket, message, 1024, ZMQ_DONTWAIT);
-            if (rec != -1) {
-
-                if (strcmp(message, "Join") == 0) {
-                    cout << "Client joined" << endl;
-                    zmq::message_t reply(2);
-                    string sid = to_string(connections);
-                    const char* id = sid.c_str();
-                    memcpy(reply.data(), id, 2);
-                    cout << (char*)reply.data() << endl;
-                    socket.send(reply, zmq::send_flags::none);
-                    connections++;
-                }
-
-                else {
-                    int mx = round(movingPlatform.getPosition().x);
-                    int my = round(movingPlatform.getPosition().y);
-                    string sreport = to_string(connections) + ":" + to_string(mx) + "." + to_string(my) + "/";
-                    int p1x = round(player.getPosition().x);
-                    int p1y = round(player.getPosition().y);
-                    sreport = sreport + to_string(p1x) + "." + to_string(p1y) + "/";
-                    
-
-                    if (message[0] == '0') { // otherPlayer #0
-                        string mes = message;
-                        string x = mes.substr(2, mes.find(".") - 2);
-                        string y = mes.substr(mes.find(".") + 1, mes.length());
-                        //cout << message[0] << " " << x << " " << y << endl;
-                        otherPlayers[0].setPosition(sf::Vector2f(stoi(x),stoi(y)));
-
-                        if (connections > 1) { // add second client to message
-                            int x1 = otherPlayers[1].getPosition().x;
-                            int y1 = otherPlayers[1].getPosition().y;
-                            sreport = sreport + to_string(x1) + "." + to_string(y1) + "/";
-                        }
-
-                        if (connections > 2) { // add third client to message
-                            int x1 = otherPlayers[2].getPosition().x;
-                            int y1 = otherPlayers[2].getPosition().y;
-                            sreport = sreport + to_string(x1) + "." + to_string(y1) + "/";
-                        }
-                        
-                    }
-
-                    if (message[0] == '1') { // otherPlayer #1
-                        string mes = message;
-                        string x = mes.substr(2, mes.find(".") - 2);
-                        string y = mes.substr(mes.find(".") + 1, mes.length());
-                        //cout << x << " " << y << endl;
-                        //cout << message[0] << " " << x << " " << y << endl;
-                        otherPlayers[1].setPosition(sf::Vector2f(stoi(x), stoi(y)));
-
-                        if (connections > 1) { // add second client to message
-                            int x1 = otherPlayers[0].getPosition().x;
-                            int y1 = otherPlayers[0].getPosition().y;
-                            sreport = sreport + to_string(x1) + "." + to_string(y1) + "/";
-                        }
-
-                        if (connections > 2) { // add third client to message
-                            int x1 = otherPlayers[2].getPosition().x;
-                            int y1 = otherPlayers[2].getPosition().y;
-                            sreport = sreport + to_string(x1) + "." + to_string(y1) + "/";
-                        }
-
-                    }
-
-                    if (message[0] == '2') {
-                        string mes = message;
-                        string x = mes.substr(2, mes.find(".") - 2);
-                        string y = mes.substr(mes.find(".") + 1, mes.length());
-                        otherPlayers[2].setPosition(sf::Vector2f(stoi(x), stoi(y)));
-
-                        if (connections > 1) { // add second client to message
-                            int x1 = otherPlayers[0].getPosition().x;
-                            int y1 = otherPlayers[0].getPosition().y;
-                            sreport = sreport + to_string(x1) + "." + to_string(y1) + "/";
-                        }
-
-                        if (connections > 2) { // add third client to message
-                            int x1 = otherPlayers[1].getPosition().x;
-                            int y1 = otherPlayers[1].getPosition().y;
-                            sreport = sreport + to_string(x1) + "." + to_string(y1) + "/";
-                        }
-
-                    }
-
-
-                    cout << sreport << endl;
-                    const char* report = sreport.c_str();
-                    zmq::message_t reply(1024);
-                    memcpy(reply.data(), report, 1024);
-                    socket.send(reply, zmq::send_flags::none);
-                }
-            }
-        }
-
-        // draw
-        if (connections > 0) {
-            window.draw(otherPlayers[0]);
-        }
-        if (connections > 1) {
-            window.draw(otherPlayers[1]);
-        }
-        if (connections > 2) {
-            window.draw(otherPlayers[2]);
-        }
-
-        window.draw(platform);
+        window.draw(platform1);
+        window.draw(platform2);
+        window.draw(platform3);
         window.draw(wall);
         window.draw(wall2);
         window.draw(ceiling);
-
-        movingPlatform.frameMove(deltaTime, player);
         window.draw(movingPlatform);
+        window.draw(movingPlatform2);
 
-        window.draw(player);
+        for (int i = 0; i < 4; i++) { // check which player slots are connected
+            if (playerTimer[i]->getElapsedTime().asSeconds() > disconnectTime && *connectedPlayers[i]) {
+                cout << "Client disconnected: " << i << endl;
+                *connectedPlayers[i] = false;
+            }
 
-
+            if (*connectedPlayers[i] == true) {
+                window.draw(*players[i]);
+            }
+        }
+        
+        //std::cout << player.getPosition().x << " " << player.getPosition().y << endl;
         // end the current frame
         window.display();
     }
+
+    thread0.join();
+    thread1.join();
+    thread2.join();
+    thread3.join();
 
     return 0;
 }

@@ -17,6 +17,10 @@ long Timeline::getTime() { //returns the gametime
 }
 
 void Timeline::togglePause() {
+    if (last_pasued_button_time + 0.5f > anchor->getElapsedTime().asSeconds()) { // stops from holding button breaking game
+        return;
+    }
+    last_pasued_button_time = anchor->getElapsedTime().asSeconds();
     if (paused)
         unpause();
     else
@@ -38,6 +42,7 @@ void Timeline::changeTic(float tic) { //changes the gametime tic speed
         unpause();
     last_paused_time = 0;
     elapsed_paused_time = 0;
+    last_pasued_button_time = 0;
     this->tic = tic;
 }
 bool Timeline::isPaused() {

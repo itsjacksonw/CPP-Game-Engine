@@ -7,12 +7,17 @@ sf::Vector2f direction;
 float speed;
 float top;
 float bottom;
+bool vertical = false;
 
 public:
 
+MovingPlatform();
 MovingPlatform(float width, float height, float x, float y,
     sf::Vector2f direction, float speed, float top, float bottom);
 
-void frameMove(float deltaTime, GameObject player);
+MovingPlatform(float width, float height, float x, float y,
+    sf::Vector2f direction, float speed, float top, float bottom, sf::Color color);
+
+void frameMove(float deltaTime);
     
 };

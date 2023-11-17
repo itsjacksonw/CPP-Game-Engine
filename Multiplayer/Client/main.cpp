@@ -8,9 +8,10 @@
 #include "MovingPlatform.h"
 #include "Character.h"
 #include "Timeline.h"
-#include <cmath>
+#include "SpawnPoint.h"
+#include "DeathZone.h"
+#include "EventManager.h"
 #include <zmq.hpp>
-#include <windows.h>
 
 using namespace std;
 
@@ -20,17 +21,17 @@ class InputThread {
     int i; // an identifier
     //ThreadExample *other; // a reference to the "other" thread in this example
     std::mutex* _mutex; // the object for mutual exclusion of execution
-    Character* _player;
-    float _deltaTime;
+    long* previousTime;
+    EventManager* e;
 
 public:
-    InputThread(int i, std::mutex* _mutex, Character* _player, long _deltaTime) {
+    InputThread(int i, std::mutex* _mutex, long* previousTime, EventManager* e) {
         this->busy = false;
         this->i = i;
         if (i == 0) { this->busy = true; }
         this->_mutex = _mutex;
-        this->_player = _player;
-        this->_deltaTime = _deltaTime;
+        this->previousTime = previousTime;
+        this->e = e;
     }
 
     bool isBusy()
@@ -46,16 +47,48 @@ public:
 
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Right)) {
                 std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-                _player->walk(sf::Vector2f(1, 0), _deltaTime);
+                //_player->walk(sf::Vector2f(1, 0), _deltaTime);
+                
+                e->ReceiveEvent(e->EVENT_TYPE_INPUT, 5);
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Left)) {
                 std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-                _player->walk(sf::Vector2f(-1, 0), _deltaTime);
+                e->ReceiveEvent(e->EVENT_TYPE_INPUT, 4);
+                //_player->walk(sf::Vector2f(-1, 0), _deltaTime);
             }
             if (sf::Keyboard::isKeyPressed(sf::Keyboard::Up)) {
                 std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-                _player->jump();
+                e->ReceiveEvent(e->EVENT_TYPE_INPUT, 6);
             }
+
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::P)) {
+                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
+                e->ReceiveEvent(e->EVENT_TYPE_INPUT, 7);
+            }
+
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Comma)) {
+                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
+                if (e->timeline->tic != 10) {
+                    e->ReceiveEvent(e->EVENT_TYPE_INPUT, 8);
+                    *previousTime = 0;
+                }
+                
+            }
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Slash)) {
+                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
+                if (e->timeline->tic != 40) {
+                    e->ReceiveEvent(e->EVENT_TYPE_INPUT, 10);
+                    *previousTime = 0;
+                }
+            }
+            if (sf::Keyboard::isKeyPressed(sf::Keyboard::Period)) {
+                std::unique_lock<std::mutex> cv_lock(*this->_mutex);
+                if (e->timeline->tic != 20) {
+                    e->ReceiveEvent(e->EVENT_TYPE_INPUT, 9);
+                    *previousTime = 0;
+                }
+            }
+            
             
         }
         catch (...) {
@@ -71,21 +104,16 @@ class CollisionThread {
     int i; // an identifier
     //ThreadExample *other; // a reference to the "other" thread in this example
     std::mutex* _mutex; // the object for mutual exclusion of execution
-    Character* _player;
-    GameObject* _platforms;
-    int _numPlatforms;
-    float _deltaTime;
+   
+    EventManager* e;
 
 public:
-    CollisionThread(int i, std::mutex* _mutex, Character* _player, GameObject _platforms[], int _numPlatforms, long _deltaTime) {
+    CollisionThread(int i, std::mutex* _mutex, EventManager* e) {
         this->busy = false;
         this->i = i;
         if (i == 0) { this->busy = true; }
         this->_mutex = _mutex;
-        this->_player = _player;
-        this->_platforms = _platforms;
-        this->_numPlatforms = _numPlatforms;
-        this->_deltaTime = _deltaTime;
+        this->e = e;
     }
 
     bool isBusy()
@@ -98,8 +126,8 @@ public:
         // player inputs
         try {
             std::unique_lock<std::mutex> cv_lock(*this->_mutex);
-            _player->processFrame(_platforms, _numPlatforms, _deltaTime);
-
+            //_player->processFrame(_platforms, _numPlatforms, _spawns, _numSpawns, _deaths, _numDeaths, _scrolls, _numScrolls, _deltaTime);
+            e->ReceiveEvent(e->EVENT_TYPE_COLLISION, 2);
             
         }
         catch (...) {
@@ -140,8 +168,6 @@ int main() {
     char* id = (char*)reply.data();
     cout << "Connected Id: " << id << endl;
 
-    int connections = 0;
-
     // creates a window 800x600 pixels
     sf::RenderWindow window;
     window.create(sf::VideoMode(800, 600), "Game Window", sf::Style::Resize); //sf::Style::Close | sf::Style::Resize
@@ -152,26 +178,65 @@ int main() {
     sf::Clock clock = sf::Clock();
     long previousTime = 0;
 
-    float halfSpeed = 50.0f;
-    float normalSpeed = 25.0f;
-    float doubleSpeed = 12.5f;
+    float halfSpeed = 40.0f;
+    float normalSpeed = 20.0f;
+    float doubleSpeed = 10.0f;
 
-    float tic = 25.0f;
+    float tic = 20.0f;
     Timeline timeline = Timeline(&clock, tic);
 
+    EventManager eventManager = EventManager(&timeline, &socket, id);
+
     // create objects
-    Platform platform = Platform(800, 100, 0, 500);
-    Platform wall = Platform(25, 600, 0, 0);
-    Platform wall2 = Platform(25, 600, 775, 0);
+    Platform platform1 = Platform(350, 100, 0, 500, sf::Color::Magenta);
+    Platform platform2 = Platform(725, 100, 450, 500, sf::Color::Cyan);
+    Platform platform3 = Platform(350, 100, 1275, 500, sf::Color::Green);
+    Platform wall = Platform(25, 600, -25, 0);
+    Platform wall2 = Platform(25, 600, 775 + 800, 0);
     Platform ceiling = Platform(800, 50, 0, 0);
-    MovingPlatform movingPlatform = MovingPlatform(200, 25, 450, 450, sf::Vector2f(0, 1), 0, 200, 400);
-    movingPlatform.setFillColor(sf::Color(sf::Color::Green));
+    MovingPlatform movingPlatform = MovingPlatform(200, 25, 450, 450, sf::Vector2f(0, 1), 1, 200, 400, sf::Color::Green);
+    MovingPlatform movingPlatform2 = MovingPlatform(200, 25, 100, 250, sf::Vector2f(1, 0), 1, 225, 100, sf::Color::Yellow);
+
+    // checkpoints
+    SpawnPoint spawn1 = SpawnPoint(100, 500, 25, 0, sf::Vector2f(50, 450));
+    SpawnPoint spawn2 = SpawnPoint(100, 500, 675, 0, sf::Vector2f(725, 450));
+    SpawnPoint spawn3 = SpawnPoint(100, 500, 800, 0, sf::Vector2f(80, 450));
+
+    DeathZone death = DeathZone(1600, 100, 0, 600); // create death zone at bottom of screen
+
+    // side scrolling
+    SideBoundary scroll1 = SideBoundary(1, 600, 800, 0, -1, 800, 1);
+    
+
 
     // create the player 
-    Character player = Character(25, 50, 100, 300, 6);
+    Character player = Character(25, 50, 50, 300, 6);
 
-    Character otherPlayers[3] = { Character(25, 50, 100, 300, 6),
-        Character(25, 50, 100, 300, 6), Character(25, 50, 100, 300, 6) };
+    //register events
+    eventManager.RegisterSpawnEvent(0, 5, &player); // create spawn event for player id = 0
+    eventManager.RegisterDeathEvent(1, 1, &player); // create death event for player id = 1
+
+    eventManager.RegisterInputEvent(4, 0, "left", &player); // id = 4
+    eventManager.RegisterInputEvent(5, 0, "right", &player);
+    eventManager.RegisterInputEvent(6, 0, "up", &player);
+    eventManager.RegisterInputEvent(7, 0, "pause", &player);
+    eventManager.RegisterInputEvent(8, 0, "fastSpeed", &player);
+    eventManager.RegisterInputEvent(9, 0, "normalSpeed", &player);
+    eventManager.RegisterInputEvent(10, 0, "slowSpeed", &player);
+    
+
+    int numPlatforms = 8;
+    GameObject* platforms[8] = { &platform1, &platform2, &platform3, &movingPlatform, &movingPlatform2, &wall2, &ceiling, &wall }; // list of platforms to collide with
+    int numSpawns = 3;
+    SpawnPoint* spawns[3] = { &spawn1, &spawn2, &spawn3 };
+    int numDeaths = 1;
+    DeathZone* deaths[1] = { &death };
+    int numScrolls = 1;
+    SideBoundary* scrolls[1] = { &scroll1 };
+
+    Character otherPlayers[4] = { Character(25, 50, 50, 300, 6), Character(25, 50, 50, 300, 6), Character(25, 50, 50, 300, 6), Character(25, 50, 50, 300, 6) };
+
+    eventManager.RegisterCollisionEvent(2, 0, &player, platforms, numPlatforms, spawns, numSpawns, deaths, numDeaths, scrolls, numScrolls);
 
     // run the program as long as the window is open
     while (window.isOpen())
@@ -183,25 +248,6 @@ int main() {
             // "close requested" event: we close the window
             if (event.type == sf::Event::Closed)
                 window.close();
-
-            if (event.type == sf::Event::KeyPressed) {
-                if (event.key.scancode == sf::Keyboard::Scan::P) {
-                    timeline.togglePause();
-                }
-
-                if (event.key.scancode == sf::Keyboard::Scan::Comma) {
-                    timeline.changeTic(halfSpeed);
-                    previousTime = 0;
-                }
-                if (event.key.scancode == sf::Keyboard::Scan::Slash) {
-                    timeline.changeTic(doubleSpeed);
-                    previousTime = 0;
-                }
-                if (event.key.scancode == sf::Keyboard::Scan::Period) {
-                    timeline.changeTic(normalSpeed);
-                    previousTime = 0;
-                }
-            }
         }
 
         // clear the window with black color
@@ -218,22 +264,20 @@ int main() {
         bool ranInput = false;
         std::thread thread0;
         if (window.hasFocus()) {
-            InputThread inputThread(0, &mutex, &player, deltaTime);
+            InputThread inputThread(0, &mutex, &previousTime, &eventManager);
             thread0 = std::thread(run_input, &inputThread);
             ranInput = true;
         }
+        
 
         // collision
         //player.processFrame(platforms, numPlatforms, deltaTime);
-        int numPlatforms = 5;
-        GameObject platforms[5] = { platform, movingPlatform, wall, wall2, ceiling }; // list of platforms to collide with
+        
 
-        CollisionThread collisionThread(0, &mutex, &player, platforms, numPlatforms, deltaTime);
+        CollisionThread collisionThread(0, &mutex, &eventManager);
         std::thread thread1(run_collision, &collisionThread);
 
-        if (player.getPosition().y > 900) { // respawn if fall off screen
-            player.setPosition(sf::Vector2f(100, 300));
-        }
+        
 
         // join the threads
         if (ranInput) {
@@ -241,10 +285,14 @@ int main() {
         }
         thread1.join();
 
+        eventManager.DispatchEvents(deltaTime);
+
+        player.moveY(deltaTime);
+        player.gravity(deltaTime);
 
         // contact the server
         string position;
-        int x = round(player.getPosition().x);
+        int x = round(player.getPosition().x) + (player.room * 800);
         int y = round(player.getPosition().y);
         string sx = to_string(x);
         string sy = to_string(y);
@@ -255,100 +303,52 @@ int main() {
         memcpy(request.data(), message, strlen(message) + 1);
         //cout << (char*)request.data() << endl;
         socket.send(request, zmq::send_flags::none);
-        
+
         // now get data back from the server
         char buffer[1024];
         int size = zmq_recv(socket, buffer, 1024, 0);
+        string mes = buffer;
 
-        if (buffer[0] == '1') { // this means there is only one connection, so only one more player to render
-            connections = 1;
-            string mes = buffer;
-            //cout << mes << endl;
-            string mx = mes.substr(2, mes.find(".") - 2);
-            string my = mes.substr(mes.find(".") + 1, mes.find("/") - 6);
-            
-            movingPlatform.setPosition(sf::Vector2f(stoi(mx), stoi(my)));
-            string next = mes.substr(mes.find("/") + 1, mes.length() - 1);
-            //cout << next << endl;
-            string p1x = next.substr(0, next.find("."));
-            string p1y = next.substr(next.find(".") + 1, next.find("/") - 3);
-            //cout << p1x << " " << p1y << endl;
-            otherPlayers[0].setPosition(sf::Vector2f(stoi(p1x), stoi(p1y)));
+        string movingPlatforms = mes.substr(0, mes.find("/"));
+        mes = mes.substr(mes.find("/") + 1, mes.length());
+
+        string mx = movingPlatforms.substr(0, movingPlatforms.find("."));
+        string my = movingPlatforms.substr(movingPlatforms.find(".") + 1, movingPlatforms.find("-"));
+
+        string mx2 = movingPlatforms.substr(movingPlatforms.find("-") + 1, movingPlatforms.find(","));
+        string my2 = movingPlatforms.substr(movingPlatforms.find(",") + 1, movingPlatforms.find("/"));
+
+        movingPlatform.setPosition(sf::Vector2f(stoi(mx) - (player.room * 800), stoi(my)));
+        movingPlatform2.setPosition(sf::Vector2f(stoi(mx2) - (player.room * 800), stoi(my2)));
+
+        while (mes.find("/") != std::string::npos) {
+            string line = mes.substr(0, mes.find("/"));
+            mes = mes.substr(mes.find("/") + 1, mes.length());
+            string i = line.substr(0, line.find(":"));
+            string x = line.substr(line.find(":") + 1, line.find(",") - 2);
+            string y = line.substr(line.find(",") + 1, line.find("/"));
+
+            cout << line << " / " << i << " " << x << " " << y << endl;
+
+            otherPlayers[stoi(i)].setPosition(sf::Vector2f(stoi(x) - (player.room * 800), stoi(y)));
+            window.draw(otherPlayers[stoi(i)]);
         }
 
-        if (buffer[0] == '2') { // two clients are connected (including this one)
-            connections = 2;
-            string mes = buffer;
-            //cout << mes << endl;
-            string mx = mes.substr(2, mes.find(".") - 2);
-            string my = mes.substr(mes.find(".") + 1, mes.find("/") - 6);
-
-            movingPlatform.setPosition(sf::Vector2f(stoi(mx), stoi(my)));
-            string next = mes.substr(mes.find("/") + 1, mes.length() - 1);
-            //cout << next << endl;
-            string p1x = next.substr(0, next.find("."));
-            string p1y = next.substr(next.find(".") + 1, next.find("/") - 3);
-            //cout << p1x << " " << p1y << endl;
-            otherPlayers[0].setPosition(sf::Vector2f(stoi(p1x), stoi(p1y)));
-
-            string next2 = next.substr(next.find("/") + 1, next.length() - 1);
-            string p2x = next2.substr(0, next2.find("."));
-            string p2y = next2.substr(next2.find(".") + 1, next2.find("/") - 3);
-
-            //cout << next2 << " " << p2x << " " << p2y << endl;
-            otherPlayers[1].setPosition(sf::Vector2f(stoi(p2x), stoi(p2y)));
-        }
-
-        if (buffer[0] == '3') { // three clients are connected (including this one)
-            connections = 3;
-            string mes = buffer;
-            //cout << mes << endl;
-            string mx = mes.substr(2, mes.find(".") - 2);
-            string my = mes.substr(mes.find(".") + 1, mes.find("/") - 6);
-
-            movingPlatform.setPosition(sf::Vector2f(stoi(mx), stoi(my)));
-            string next = mes.substr(mes.find("/") + 1, mes.length() - 1);
-            //cout << next << endl;
-            string p1x = next.substr(0, next.find("."));
-            string p1y = next.substr(next.find(".") + 1, next.find("/") - 3);
-            //cout << p1x << " " << p1y << endl;
-            otherPlayers[0].setPosition(sf::Vector2f(stoi(p1x), stoi(p1y)));
-
-            string next2 = next.substr(next.find("/") + 1, next.length() - 1);
-            string p2x = next2.substr(0, next2.find("."));
-            string p2y = next2.substr(next2.find(".") + 1, next2.find("/") - 3);
-
-            //cout << next2 << " " << p2x << " " << p2y << endl;
-            otherPlayers[1].setPosition(sf::Vector2f(stoi(p2x), stoi(p2y)));
-
-            string next3 = next2.substr(next2.find("/") + 1, next2.length() - 1);
-            string p3x = next3.substr(0, next3.find("."));
-            string p3y = next3.substr(next3.find(".") + 1, next3.find("/") - 3);
-            otherPlayers[2].setPosition(sf::Vector2f(stoi(p3x), stoi(p3y)));
-        }
-
-        // draw
-        if (connections > 0) {
-            window.draw(otherPlayers[0]);
-        }
-        if (connections > 1) {
-            window.draw(otherPlayers[1]);
-        }
-        if (connections > 2) {
-            window.draw(otherPlayers[2]);
-        }
-
-        window.draw(platform);
+        window.draw(platform1);
+        window.draw(platform2);
+        window.draw(platform3);
         window.draw(wall);
         window.draw(wall2);
         window.draw(ceiling);
 
         movingPlatform.frameMove(deltaTime, player);
+        movingPlatform2.frameMove(deltaTime, player);
         window.draw(movingPlatform);
+        window.draw(movingPlatform2);
 
         window.draw(player);
-
-
+        
+        //std::cout << player.getPosition().x << " " << player.getPosition().y << endl;
         // end the current frame
         window.display();
     }

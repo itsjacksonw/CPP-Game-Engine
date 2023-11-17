@@ -1,11 +1,17 @@
 Author: Jackson Westbrook
-PROJECT USES VISUAL STUDIO 2022
+PROJECT MADE IN VISUAL STUDIO 2022
 
 Base is the main code for the engine.
 
 Multiplayer allows you to host multiple clients on a server.
 
-https://docs.google.com/document/d/1tjNixCrwzgzmpIOdD9tFMlpQaYr9WocrL9giDG7uSbQ/edit?usp=sharing
-Follow this guide to setup your visual studio 2022 environment.
+Use the .exes in the Run folder to run what you want.
 
-Each section has its own README with more instructions.
+Controls:
+left arrow to move left
+right arrow to move right
+up arrow to jump
+p to pause
+, to slow time
+. to set to default time
+/ to speed up time

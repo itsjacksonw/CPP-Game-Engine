@@ -8,12 +8,14 @@ private:
     float start_time; //the time of the *anchor when created
     float elapsed_paused_time = 0;
     float last_paused_time = 0;
-    float tic; //units of anchor timeline per step
+    
     bool paused = false;
     sf::Clock* anchor; //for most general game time, system library pointer
+    float last_pasued_button_time = 0;
 
 public:
     Timeline(sf::Clock* anchor, float tic);
+    float tic; //units of anchor timeline per step
     long getTime(); //this can be game or system time implementation
     void togglePause();
     void pause();
